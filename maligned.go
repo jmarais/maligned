@@ -38,20 +38,64 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	summary := info{
+		make(map[int][]int),
+		make(map[int]map[int][]int),
+	}
 	for _, pkg := range prog.InitialPackages() {
 		for _, file := range pkg.Files {
 			ast.Inspect(file, func(node ast.Node) bool {
 				if s, ok := node.(*ast.StructType); ok {
-					malign(node.Pos(), pkg.Types[s].Type.(*types.Struct))
+					malign(node.Pos(), pkg.Types[s].Type.(*types.Struct), summary)
 				}
 				return true
 			})
 		}
 	}
+	fmt.Printf("summary: %#v\n", summary)
+	fmt.Printf("Optimised\n")
+	fmt.Printf("Size\tNumber of Structs\n")
+	currentSize := 0
+	optimalSize := 0
+	numStructs := 0
+	keys := make([]int, 0)
+	for k := range summary.optimal {
+		keys = append(keys, k)
+	}
+	sort.Sort(sort.IntSlice(keys))
+	for _, k := range keys {
+		fmt.Printf("%d\t%d\n", k, len(summary.optimal[k]))
+		currentSize += k * len(summary.optimal[k])
+		optimalSize += k * len(summary.optimal[k])
+		numStructs += len(summary.optimal[k])
+	}
+	fmt.Printf("Maligned\n")
+	fmt.Printf("Size\tOptimal\tSave\tNumber of Structs\n")
+	keys = make([]int, 0)
+	for k := range summary.maligned {
+		keys = append(keys, k)
+	}
+	sort.Sort(sort.IntSlice(keys))
+	for _, kSize := range keys {
+		for kOpt, v := range summary.maligned[kSize] {
+			fmt.Printf("%d\t%d\t%d\t%d\n", kSize, kOpt, kSize-kOpt, len(v))
+			currentSize += kSize * len(v)
+			optimalSize += kOpt * len(v)
+			numStructs += len(v)
+		}
+
+	}
+	fmt.Printf("Total:\n")
+	fmt.Printf("Num Structs\tCurrent Size\tOptimal Size\tSave\tSave %%\n")
+	fmt.Printf("%d\t\t%d\t\t%d\t\t%d\t%f\n", numStructs, currentSize, optimalSize, currentSize-optimalSize, (float64(currentSize)-float64(optimalSize))/float64(currentSize))
 }
 
-func malign(pos token.Pos, str *types.Struct) {
+type info struct {
+	optimal  map[int][]int
+	maligned map[int]map[int][]int
+}
+
+func malign(pos token.Pos, str *types.Struct, summary info) {
 	wordSize := int64(8)
 	maxAlign := int64(8)
 	switch build.Default.GOARCH {
@@ -65,6 +109,13 @@ func malign(pos token.Pos, str *types.Struct) {
 	sz, opt := s.Sizeof(str), optimalSize(str, &s)
 	if sz != opt {
 		fmt.Printf("%s: struct of size %d could be %d\n", fset.Position(pos), sz, opt)
+		if summary.maligned[int(sz)] == nil {
+			summary.maligned[int(sz)] = map[int][]int{}
+		}
+		summary.maligned[int(sz)][int(opt)] = append(summary.maligned[int(sz)][int(opt)], int(opt))
+	} else {
+		// fmt.Printf("%s: struct of size %d is optimal at %d\n", fset.Position(pos), sz, opt)
+		summary.optimal[int(sz)] = append(summary.optimal[int(sz)], int(opt))
 	}
 }
 
